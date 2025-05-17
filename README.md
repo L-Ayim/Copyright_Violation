@@ -1,4 +1,4 @@
-# Tube-MP3 Downloader & Demucs Stem Splitter (Windows)
+# Youtube-MP3 Downloader & Demucs Stem Splitter
 
 This script downloads YouTube audio as MP3 and optionally splits it into stems via Demucs. Supports 4- or 6-stem layouts, resume-safe folder sweeping, and automatic GPU detection.
 
