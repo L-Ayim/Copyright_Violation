@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Tube-MP3 Downloader + Demucs Stem Splitter (4- or 6-stem, resume-safe, GPU auto-detect)
-© 2025 Copyright_Violation – professional refactor
+Tube-MP3 Downloader + Demucs Stem Splitter (4- or 6-stem, resume‐safe, GPU auto-detect)
+© 2025 Copyright_Violation – professional refactor with GPU auto-detection
 """
 
 import argparse
@@ -20,7 +20,7 @@ except ImportError:
 
 from yt_dlp import YoutubeDL, DownloadError
 
-# Stem definitions
+# ── STEM DEFINITIONS ────────────────────────────────────────────────────────────
 STEMS_6 = [
     "vocals.mp3",
     "drums.mp3",
@@ -78,7 +78,7 @@ def run_demucs(
     device: str,
     model_name: str
 ) -> None:
-    """Separate stems using Demucs CLI"""
+    """Separate stems using Demucs CLI or fallback module"""
     logging.info("Demucs: Processing %d file(s) with model %s on %s", len(mp3_files), model_name, device)
     for mp3 in mp3_files:
         logging.info(" - %s", mp3.name)
@@ -105,7 +105,10 @@ def sweep_directories(
     stems: List[str],
     model_name: str
 ) -> None:
-    """Scan subdirectories for unsplit MP3s and run Demucs on missing stems"""
+    """
+    Scan subdirectories for unsplit MP3s and run Demucs on missing stems.
+    (Example: ./downloads/MyFolder/*.mp3 → check ./downloads/MyFolder/<model_name>/<track>/)
+    """
     for folder in base.iterdir():
         if not folder.is_dir():
             continue
@@ -115,9 +118,9 @@ def sweep_directories(
 
         pending = []
         for mp3 in mp3s:
-            # Check if all expected stems exist under the model_name folder
             target_dir = folder / model_name / mp3.stem
-            if not all((target_dir / stem).exists() for stem in stems):
+            # If folder doesn't exist or is missing any expected stem, add to pending
+            if not target_dir.exists() or not all((target_dir / s).exists() for s in stems):
                 pending.append(mp3)
 
         if pending:
@@ -132,7 +135,7 @@ def download_audio(
     out_dir: Path,
     ffmpeg_path: Optional[Path]
 ) -> List[Path]:
-    """Download audio from YouTube URLs and return list of downloaded MP3 paths"""
+    """Download audio from YouTube URLs and return list of downloaded mp3 paths"""
     ydl_opts = {
         "format": "bestaudio/best",
         "outtmpl": str(out_dir / "%(title)s.%(ext)s"),
@@ -156,8 +159,12 @@ def main() -> None:
     parser.add_argument("--sweep", action="store_true", help="Sweep existing directories for MP3s missing stems")
     parser.add_argument("--split", action="store_true", help="Split newly downloaded MP3s into stems")
     parser.add_argument("--cpu", action="store_true", help="Force Demucs to run on CPU")
+    # ── NEW: --stems flag ───────────────────────────────────────────────────────
     parser.add_argument(
-        "--stems", type=int, choices=[4, 6], default=6,
+        "--stems",
+        type=int,
+        choices=[4, 6],
+        default=6,
         help="Number of stems to split: 4 or 6 (default: 6)"
     )
     args = parser.parse_args()
@@ -175,11 +182,14 @@ def main() -> None:
         demucs_cmd = [sys.executable, "-m", "demucs"]
         logging.info("Using fallback for Demucs: %s", " ".join(demucs_cmd))
 
-    # Choose device
+    # Determine device automatically, unless forced
     device = "cpu" if args.cpu or not HAS_CUDA else "cuda"
-    logging.info("Using %s for Demucs", "GPU" if device == "cuda" else "CPU")
+    if device == "cuda":
+        logging.info("CUDA available: using GPU for Demucs")
+    else:
+        logging.info("CUDA unavailable or forced CPU: using CPU for Demucs")
 
-    # Select stems & model
+    # ── NEW: choose between 4‐stem or 6‐stem model ───────────────────────────────
     if args.stems == 6:
         stems = STEMS_6
         model_name = "htdemucs_6s"
@@ -187,31 +197,32 @@ def main() -> None:
         stems = STEMS_4
         model_name = "htdemucs"
 
-    # If --sweep is specified, scan all subfolders immediately
+    # If --sweep was passed, scan subfolders and split only missing stems
     if args.sweep:
         sweep_directories(base, demucs_cmd, device, stems, model_name)
 
-    # Create (or reuse) a "downloads" folder
+    # Ensure downloads folder exists
     download_dir = base / "downloads"
     download_dir.mkdir(exist_ok=True)
 
-    # Download new MP3 files
+    # Download any new MP3s
     mp3_list = download_audio(args.urls, download_dir, ffmpeg_path)
 
+    # ── NEW “only‐split‐if‐missing” logic ─────────────────────────────────────────
     if args.split and mp3_list:
-        # Only split those MP3s whose stems are missing
         to_split = []
         for mp3 in mp3_list:
             target_dir = download_dir / model_name / mp3.stem
-            # If the folder doesn't exist or is missing any expected stem files, queue it
-            if not target_dir.exists() or not all((target_dir / stem).exists() for stem in stems):
+            # Queue it if the folder doesn't exist or is missing any expected file
+            if not target_dir.exists() or not all((target_dir / s).exists() for s in stems):
                 to_split.append(mp3)
             else:
-                logging.info("Skipping %s (all stems already present)", mp3.name)
+                logging.info("Skipping %s (all %d stems already present)", mp3.name, len(stems))
+
         if to_split:
             run_demucs(to_split, download_dir, demucs_cmd, device, model_name)
 
-    # After processing, open the folder containing MP3s (or stems)
+    # Open the folder after processing
     if mp3_list:
         open_folder(mp3_list[0].parent)
 
