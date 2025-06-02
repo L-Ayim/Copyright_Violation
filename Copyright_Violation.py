@@ -187,18 +187,31 @@ def main() -> None:
         stems = STEMS_4
         model_name = "htdemucs"
 
+    # If --sweep is specified, scan all subfolders immediately
     if args.sweep:
         sweep_directories(base, demucs_cmd, device, stems, model_name)
 
-    # Download and optionally split
+    # Create (or reuse) a "downloads" folder
     download_dir = base / "downloads"
     download_dir.mkdir(exist_ok=True)
 
+    # Download new MP3 files
     mp3_list = download_audio(args.urls, download_dir, ffmpeg_path)
 
     if args.split and mp3_list:
-        run_demucs(mp3_list, download_dir, demucs_cmd, device, model_name)
+        # Only split those MP3s whose stems are missing
+        to_split = []
+        for mp3 in mp3_list:
+            target_dir = download_dir / model_name / mp3.stem
+            # If the folder doesn't exist or is missing any expected stem files, queue it
+            if not target_dir.exists() or not all((target_dir / stem).exists() for stem in stems):
+                to_split.append(mp3)
+            else:
+                logging.info("Skipping %s (all stems already present)", mp3.name)
+        if to_split:
+            run_demucs(to_split, download_dir, demucs_cmd, device, model_name)
 
+    # After processing, open the folder containing MP3s (or stems)
     if mp3_list:
         open_folder(mp3_list[0].parent)
 
